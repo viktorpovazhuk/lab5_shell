@@ -342,7 +342,7 @@ std::string readout_fd(int fd) {
 static void substitute_commands(std::string &com_line) {
     size_t begin = 0;
 
-    while ((begin = com_line.find("$(")) != std::string::npos) {
+    while ((begin = com_line.find("$(", begin)) != std::string::npos) {
         size_t end = com_line.find(")", begin);
         if (end == std::string::npos) {
             break;
@@ -364,6 +364,7 @@ static void substitute_commands(std::string &com_line) {
         std::string content = readout_fd(pfd[0]);
         close_wrapper(pfd[0]);
         com_line.replace(begin, end - begin + 1, content);
+        begin += com_line.size();
     }
 }
 
