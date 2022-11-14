@@ -1,4 +1,4 @@
-# Lab work 3: Implementing command-line interpreter
+# Lab work 5: Implementing command-line interpreter with pipes and redirection
 Authors (team): <a href="https://github.com/bogdanmagometa">Bohdan Mahometa</a>, 
 <a href="https://github.com/viktorpovazhuk">Viktor Povazhuk</a>,
 <a href="https://github.com/shevdan">Bohdan Shevchuk</a>
