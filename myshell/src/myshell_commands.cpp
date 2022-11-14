@@ -317,6 +317,55 @@ std::string expand_variables(std::string value) {
     return value;
 }
 
+std::string readout_fd(int fd) {
+    const size_t BUF_SIZE = 16384;
+    std::string buf_str(BUF_SIZE, '\0');
+    char *buf = buf_str.data();
+
+    std::string file_content;
+
+    ssize_t num_read;
+    while ((num_read = read(fd, buf, BUF_SIZE))) {
+        if (num_read == -1) {
+            if (errno == EINTR)
+                continue;
+            perror("read");
+            return file_content;
+        } else {
+            file_content.append(buf, num_read);
+        }
+
+    }
+    return file_content;
+}
+
+static void substitute_commands(std::string &com_line) {
+    size_t begin = 0;
+
+    while ((begin = com_line.find("$(")) != std::string::npos) {
+        size_t end = com_line.find(")", begin);
+        if (end == std::string::npos) {
+            break;
+        }
+        std::string subcommand = com_line.substr(begin + 2, end - begin - 2);
+
+        int pfd[2];
+        pipe_wrapper(pfd, F_SETFD);
+
+        int stdout_dup = dup_wrapper(STDOUT_FILENO);
+
+        dup2(pfd[1], STDOUT_FILENO);
+        close_wrapper(pfd[1]);
+
+        exec_shell_line(subcommand);
+        dup2_wrapper(stdout_dup, STDOUT_FILENO);
+        close_wrapper(stdout_dup);
+
+        std::string content = readout_fd(pfd[0]);
+        close_wrapper(pfd[0]);
+        com_line.replace(begin, end - begin + 1, content);
+    }
+}
 
 std::vector<std::string> parse_com_line(const std::string &com_line) {
     std::vector<std::string> args;
@@ -326,6 +375,8 @@ std::vector<std::string> parse_com_line(const std::string &com_line) {
     if (clean_com_line.empty()) {
         return args;
     }
+
+    substitute_commands(clean_com_line);
 
     // split by space and expand
     std::stringstream streamData(clean_com_line);
