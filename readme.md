@@ -1,4 +1,4 @@
-# Lab work 3: Implementing command-line interpreter
+# Lab work: Implementing redirections, pipeline, background execution.
 Authors (team): <a href="https://github.com/bogdanmagometa">Bohdan Mahometa</a>, 
 <a href="https://github.com/viktorpovazhuk">Viktor Povazhuk</a>,
 <a href="https://github.com/shevdan">Bohdan Shevchuk</a>
@@ -60,13 +60,17 @@ $ mkdir -p data
 $ echo "echo hi" > ./data/hi_script.msh
 $ ./bin/myshell ./data/hi_script.msh
 hi
+$ mexport VAR=$(mecho Hello)
+$ mecho $VAR
+Hello
+
 ```
 
 ### Important!
 
 ### Results
 
-We implemented myshell with built-in commands, mycat and other features.
+We added redirections, pipeline and background execution to myshell.
 
 # Additional tasks
 Not yet.
