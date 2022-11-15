@@ -396,7 +396,7 @@ std::vector<std::string> parse_com_line(const std::string &com_line) {
             continue;
         }
 
-        if ((value.find(">ll", begin)) != std::string::npos) {
+        if ((value.find(">", begin)) != std::string::npos) {
             if (value == "&>" || value == ">&") {
                 get_next_file_fd = true;
                 get_next_file_errfd = true;
@@ -757,7 +757,7 @@ void exec_shell_line(std::string &shell_line) {
         cmd_args cur_command_line = cmds_args.back(); cmds_args.pop_back();
 
         errfd = get_fd(cur_command_line.back(), O_WRONLY); cur_command_line.pop_back();
-        fdout = get_fd(cur_command_line.back(), O_WRONLY); cur_command_line.pop_back();
+        fdout = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT); cur_command_line.pop_back();
         fdin = get_fd(cur_command_line.back(), O_RDONLY); cur_command_line.pop_back();
         if (!cnt) {
             used_fdout = fdout;
@@ -798,7 +798,7 @@ void exec_shell_line(std::string &shell_line) {
     }
     auto cur_command_line = cmds_args.back();
     errfd = get_fd(cur_command_line.back(), O_WRONLY); cur_command_line.pop_back();
-    fdout = get_fd(cur_command_line.back(), O_WRONLY); cur_command_line.pop_back();
+    fdout = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT); cur_command_line.pop_back();
     fdin = get_fd(cur_command_line.back(), O_RDONLY); cur_command_line.pop_back();
 
     if (used_fdout == -100)
