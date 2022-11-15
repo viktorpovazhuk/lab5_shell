@@ -724,8 +724,9 @@ int strip_ampersand(std::string &shell_line) {
         // " &" occurs at the end of the shell line
         return 1;
     }
-    // " &" occurs at the end of the shell line
-    return -1;
+    return 0;
+//    // " &" occurs at the end of the shell line
+//    return -1;
 }
 
 void exec_shell_line(std::string &shell_line) {
