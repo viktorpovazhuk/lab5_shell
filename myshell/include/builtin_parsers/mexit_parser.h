@@ -5,6 +5,8 @@
 
 #include "builtin_parser.h"
 
+namespace po = boost::program_options;
+
 class mexit_parser_t : public builtin_parser_t {
 public:
     mexit_parser_t() = default;

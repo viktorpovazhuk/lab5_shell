@@ -3,26 +3,21 @@
 
 #include <iostream>
 #include <string>
-#include <sstream>
 #include <vector>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <memory>
-#include <fstream>
 #include <regex>
 #include <fnmatch.h>
-#include <utility>
 #include <cstdlib>
 #include <cassert>
 #include <fcntl.h>
 
 #include <readline/readline.h>
-#include <readline/history.h>
 #include <boost/filesystem.hpp>
 #include <unordered_set>
 
-#include "options_parser.h"
 #include "builtin_parsers/builtin_parser.h"
 #include "myshell_exit_codes.h"
 #include "myshell_exceptions.h"
@@ -56,10 +51,10 @@ int close_wrapper(int fd) {
 }
 
 
-int open_wrapper(const char *pathname, int flags) {
+static int open_wrapper(const char *pathname, int flags, mode_t mode) {
     int fd;
     while (true) {
-        fd = open(pathname, flags);
+        fd = open(pathname, flags, mode);
         if (fd == -1) {
             if (errno != EINTR) {
                 perror("open");
@@ -70,6 +65,9 @@ int open_wrapper(const char *pathname, int flags) {
     }
 }
 
+/**
+ * Duplicate fd. The resulting fd will have FD_CLOEXEC set.
+ */
 int dup_wrapper(int oldfd) {
     int fd;
     while (true) {
@@ -79,9 +77,18 @@ int dup_wrapper(int oldfd) {
                 perror("dup");
                 return -1;
             }
-        }
-        else return fd;
+        } else break;
     }
+    while (true) {
+        int status = fcntl(fd, F_SETFD, FD_CLOEXEC);
+        if (status == -1) {
+            if (errno != EINTR) {
+                perror("fcntl");
+                return -1;
+            }
+        } else break;
+    }
+    return fd;
 }
 
 int dup2_wrapper(int oldfd, int newfd) {
@@ -184,7 +191,7 @@ bool run_builtin_command(std::vector<std::string> &tokens, int fd_out) {
                 perror("Failed to set variable");
                 exit_status = EFAILSET;
             }
-            val = "";
+            val.clear();
         }
         exit_status = 0;
     } else if(command == "mexit") {
@@ -339,11 +346,19 @@ std::string readout_fd(int fd) {
     return file_content;
 }
 
+static void replace_whitespaces_with_spaces(std::string &str) {
+    for (char &ch : str) {
+        if (std::isspace(ch)) {
+            ch = ' ';
+        }
+    }
+}
+
 static void substitute_commands(std::string &com_line) {
     size_t begin = 0;
 
     while ((begin = com_line.find("$(", begin)) != std::string::npos) {
-        size_t end = com_line.find(")", begin);
+        size_t end = com_line.find(')', begin);
         if (end == std::string::npos) {
             break;
         }
@@ -362,12 +377,14 @@ static void substitute_commands(std::string &com_line) {
         close_wrapper(stdout_dup);
 
         std::string content = readout_fd(pfd[0]);
+        replace_whitespaces_with_spaces(content);
         close_wrapper(pfd[0]);
         com_line.replace(begin, end - begin + 1, content);
         begin += com_line.size();
     }
 }
 
+//TODO: look through https://www.gnu.org/software/bash/manual/html_node/Shell-Operation.html
 std::vector<std::string> parse_com_line(const std::string &com_line) {
     std::vector<std::string> args;
     std::string fd = "1", errfd = "2", fdin = "0";
@@ -386,17 +403,16 @@ std::vector<std::string> parse_com_line(const std::string &com_line) {
     bool get_next_file_fd = false, get_next_file_errfd = false, get_next_fdin = false;
     while (std::getline(streamData, value, ' ')) {
 
-        size_t begin = 0, end;
-        std::string delim = ">";
+        size_t begin = 0;
 
-        if ((value.find("<", begin)) != std::string::npos) {
+        if ((value.find('<', begin)) != std::string::npos) {
             if (arg_num)
                 continue;
             get_next_fdin = true;
             continue;
         }
 
-        if ((value.find(">", begin)) != std::string::npos) {
+        if ((value.find('>', begin)) != std::string::npos) {
             if (value == "&>" || value == ">&") {
                 get_next_file_fd = true;
                 get_next_file_errfd = true;
@@ -459,123 +475,6 @@ std::vector<std::string> parse_com_line(const std::string &com_line) {
     return args;
 }
 
-void run_outer_command(std::vector<std::string> &args) {
-    pid_t pid = fork();
-
-    if (pid == -1) {
-        perror("Fork failed");
-        exit_status = ExitCodes::EFORKFAIL;
-        return;
-    }
-
-    if (pid != 0) {
-        int child_status;
-        while (true) {
-            int status = waitpid(pid, &child_status, 0);
-            if (status == -1) {
-                if (errno != EINTR) {
-                    perror("Unexpected error from waitpid");
-                    exit_status = ExitCodes::EOTHER;
-                    return;
-                }
-            } else {
-                break;
-            }
-            // here EINTR happened
-        }
-        if (WIFEXITED(child_status)) {
-            exit_status = WEXITSTATUS(child_status);
-        } else if (WIFSIGNALED(child_status)) {
-            exit_status = ExitCodes::ESIGNALFAIL;
-        }
-    } else {
-        std::string file_for_exec;
-        std::vector<const char *> args_for_exec;
-
-        if (fs::path{args[0]}.extension() == ".msh") {
-            file_for_exec = "myshell";
-            args_for_exec.push_back("myshell");
-        } else {
-            file_for_exec = args[0];
-        }
-
-        for (const auto &str: args) {
-            args_for_exec.push_back(str.c_str());
-        }
-        args_for_exec.push_back(nullptr);
-
-        execvp(file_for_exec.c_str(), const_cast<char *const *>(args_for_exec.data()));
-        perror("Exec failed");
-        exit(ExitCodes::EEXECFAIL);
-    }
-}
-
-void close_other_pipes(int cmd_idx, int commands_num, std::vector<int> pipes_fds) {
-    for (int i = 0; i < pipes_fds.size(); i++) {
-        if (i != 2 * cmd_idx - 1 && i != 2 * cmd_idx && !(cmd_idx == 0 && i == pipes_fds.size() - 2) && !(cmd_idx == commands_num - 1 && i == pipes_fds.size() - 1)) {
-            if (close_wrapper(pipes_fds[i]) == -1) {
-                char* error_info;
-                sprintf(error_info, "command %d, other pipes closing: ", cmd_idx);
-                throw std::runtime_error{strcat(error_info, strerror(errno))};
-            }
-        }
-    }
-    // need std::endl to flush buffer before changing output to pipe end
-}
-
-void change_command_streams(int command_idx, int commands_num, std::vector<int> &pipes_fds) {
-    if (command_idx != 0) {
-        if (dup2_wrapper(pipes_fds[command_idx*2-1], STDIN_FILENO) == -1) {
-            char* error_info;
-            sprintf(error_info, "command %d, stdin substitution: ", command_idx);
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-        if (close_wrapper(pipes_fds[command_idx*2-1]) == -1) {
-            char* error_info;
-            sprintf(error_info, "command %d, stdin pipe end close: ", command_idx);
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-    }
-    else if (command_idx == 0 && pipes_fds[pipes_fds.size() - 2] != STDIN_FILENO) {
-        int input_fd = pipes_fds[pipes_fds.size() - 2];
-        if (dup2_wrapper(input_fd, STDIN_FILENO) == -1) {
-            char* error_info;
-            sprintf(error_info, "command 0, stdin substitution: ");
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-        if (close_wrapper(input_fd) == -1) {
-            char* error_info;
-            sprintf(error_info, "command 0, stdin pipe end close: ");
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-    }
-    if (command_idx != commands_num - 1) {
-        if (dup2_wrapper(pipes_fds[command_idx*2], STDOUT_FILENO) == -1) {
-            char* error_info;
-            sprintf(error_info, "command %d, stdout substitution: ", command_idx);
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-        if (close_wrapper(pipes_fds[command_idx*2]) == -1) {
-            char* error_info;
-            sprintf(error_info, "command %d, stdout pipe end close: ", command_idx);
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-    }
-    else if (command_idx == commands_num - 1 && pipes_fds[pipes_fds.size() - 1] != STDOUT_FILENO) {
-        int output_fd = pipes_fds[pipes_fds.size() - 1];
-        if (dup2_wrapper(output_fd, STDOUT_FILENO) == -1) {
-            char* error_info;
-            sprintf(error_info, "last command, stdout substitution: ");
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-        if (close_wrapper(output_fd) == -1) {
-            char* error_info;
-            sprintf(error_info, "last command, stdout pipe end close: ");
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-    }
-}
-
 void execute_command(std::string &file_for_exec, cmd_args &args) {
     std::vector<const char *> args_for_exec;
     for (const auto &str: args) {
@@ -586,71 +485,6 @@ void execute_command(std::string &file_for_exec, cmd_args &args) {
     execvp(file_for_exec.c_str(), const_cast<char *const *>(args_for_exec.data()));
     perror("Exec failed");
 }
-
-void exec_piped_commands(std::vector<cmd_args> &cmds_args, int input_fd, int output_fd) {
-    std::vector<int> pipes_fds((cmds_args.size() - 1) * 2);
-    int commands_num = cmds_args.size();
-
-    for (int i = 0; i < pipes_fds.size() / 2; i++) {
-        int fds[2];
-        if (pipe(fds) == -1) {
-            char* error_info;
-            sprintf(error_info, "pipe %d, pipe creation: ", i);
-            throw std::runtime_error{strcat(error_info, strerror(errno))};
-        }
-        pipes_fds[i*2] = fds[1];
-        pipes_fds[i*2+1] = fds[0];
-    }
-    pipes_fds.push_back(input_fd);
-    pipes_fds.push_back(output_fd);
-
-    for (int cmd_idx = 0; cmd_idx < commands_num; cmd_idx++) {
-        pid_t pid = fork();
-
-        if (pid == 0) {
-            close_other_pipes(cmd_idx, commands_num, pipes_fds);
-
-            change_command_streams(cmd_idx, commands_num, pipes_fds);
-
-            std::string &file_for_exec = cmds_args[cmd_idx][0];
-            cmd_args &args = cmds_args[cmd_idx];
-
-            execute_command(file_for_exec, args);
-        }
-    }
-
-    close_other_pipes(-1, commands_num, pipes_fds);
-
-    for (int i = 0; i < commands_num; i++) {
-        if (waitpid(-1, nullptr, 0) == -1) {
-            perror("wait");
-        }
-    }
-}
-
-//std::vector<std::string> split_redirections(std::string &shell_line) {
-//    size_t begin = 0, end;
-//    std::string delim = " | ";
-//    std::vector<std::string> cmd_lines;
-//    std::string cmd_line;
-//    while ((end = shell_line.find(delim, begin)) != std::string::npos) {
-//        cmd_line = shell_line.substr(begin, end - begin);
-//
-//        cmd_lines.push_back(cmd_line);
-//        begin = end + delim.length();
-//    }
-//    cmd_line = shell_line.substr(begin, end);
-//    cmd_lines.push_back(cmd_line);
-//
-//    std::vector<cmd_args> cmds_args;
-//    for (const std::string &line: cmd_lines) {
-//        std::cout << " cmd_line:" << line << ": new" << std::endl;
-//        cmd_args args = parse_com_line(line);
-//        cmds_args.push_back(args);
-//    }
-//
-//    return cmds_args;
-//}
 
 std::vector<cmd_args> split_shell_line(std::string &shell_line) {
     size_t begin = 0, end;
@@ -687,11 +521,11 @@ static bool check_builtin(const std::string &s) {
     return builtins.count(s);
 }
 
-int get_fd(std::string fd, int flag) {
+static int get_fd(const std::string &fd, int flag) {
     if (fd == "0" || fd == "1" || fd == "2")
         return stoi(fd);
     while (true) {
-        int cur_fd =  open_wrapper(fd.c_str(), flag);
+        int cur_fd =  open_wrapper(fd.c_str(), flag, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH);
         if (cur_fd == -1) {
             if (errno != EINTR) {
                 perror("fd error");
@@ -730,7 +564,7 @@ int strip_ampersand(std::string &shell_line) {
 }
 
 void exec_shell_line(std::string &shell_line) {
-    bool must_wait;
+    bool must_wait = false;
     switch (strip_ampersand(shell_line)) {
         case -1:
             std::cerr << "Wrong use of &: should be on redirections" << std::endl;
@@ -748,79 +582,70 @@ void exec_shell_line(std::string &shell_line) {
     }
 
     std::vector<pid_t> child_pids;
-    int fdin, fdout, errfd, used_fdin = -100, used_fdout = -100, used_errfd = -100;
 
     int dup_stdout = dup_wrapper(STDOUT_FILENO);
-    int dup_stdin = dup_wrapper(STDIN_FILENO);
-    int dup_stderr = dup_wrapper(STDERR_FILENO);
-    int cnt = 0;
     while (cmds_args.size() > 1) {
         cmd_args cur_command_line = cmds_args.back(); cmds_args.pop_back();
 
-        errfd = get_fd(cur_command_line.back(), O_WRONLY); cur_command_line.pop_back();
-        fdout = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT); cur_command_line.pop_back();
-        fdin = get_fd(cur_command_line.back(), O_RDONLY); cur_command_line.pop_back();
-        if (!cnt) {
-            used_fdout = fdout;
-            used_errfd = errfd;
-        }
-        cnt++;
-//        std::cout << "CUR CMD FD: " << errfd << "  " << fdout << "  " << fdin << std::endl;
         int pfd[2];
         pipe_wrapper(pfd, F_SETFD);
 
         pid_t child_pid = fork();
         if (child_pid == 0) {
             if (check_builtin(cur_command_line[0])) {
-//        ...configure redirections
-                std::cerr << "builitn command in the middle of the pipe" << std::endl;
+                std::cerr << "builtin command in the middle of the pipe" << std::endl;
                 exit(EXIT_FAILURE);
             }
 
             dup2_wrapper(pfd[0], STDIN_FILENO);
 
 //            ...configure redirections
-            dup2_wrapper(used_fdout, 1);
-            dup2_wrapper(used_errfd, 2);
+            int errfd = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC); cur_command_line.pop_back();
+            int fdout = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC); cur_command_line.pop_back();
+//            int fdin = get_fd(cur_command_line.back(), O_RDONLY | O_CLOEXEC); cur_command_line.pop_back();
+            dup2_wrapper(fdout, STDOUT_FILENO);
+            dup2_wrapper(errfd, STDERR_FILENO);
 
             execute_command(cur_command_line[0], cur_command_line);
         }
-        child_pids.push_back(child_pid);
+        if (child_pid == -1) {
+            perror("fork");
+            continue;
+        } else {
+            child_pids.push_back(child_pid);
+        }
         if (close_wrapper(pfd[0]) == -1) {
             perror("close");
-            exit(-1);
+            exit(EXIT_FAILURE);
         }
         dup2_wrapper(pfd[1], STDOUT_FILENO);
 
         if(close_wrapper(pfd[1]) == -1) {
             perror("close");
-            exit(-1);
+            exit(EXIT_FAILURE);
         }
-    }
+    };
     auto cur_command_line = cmds_args.back();
-    errfd = get_fd(cur_command_line.back(), O_WRONLY); cur_command_line.pop_back();
-    fdout = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT); cur_command_line.pop_back();
-    fdin = get_fd(cur_command_line.back(), O_RDONLY); cur_command_line.pop_back();
+    int errfd = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC); cur_command_line.pop_back();
+    int fdout = get_fd(cur_command_line.back(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC); cur_command_line.pop_back();
+    int fdin = get_fd(cur_command_line.back(), O_RDONLY | O_CLOEXEC); cur_command_line.pop_back();
 
-    if (used_fdout == -100)
-        used_fdout = fdout;
-    if (used_errfd == -100)
-        used_errfd = errfd;
-    used_fdin = fdin;
     if (check_builtin(cur_command_line[0])) {
 //        ...configure redirections
-        dup2_wrapper(used_errfd, 2);
-        run_builtin_command(cur_command_line, used_fdout);
-    } else {
+        dup2_wrapper(errfd, STDERR_FILENO);
+        dup2_wrapper(fdout, STDOUT_FILENO);
+        dup2_wrapper(fdin, STDIN_FILENO);
 
+        run_builtin_command(cur_command_line, STDOUT_FILENO);
+    } else {
 //        std::cout << "CUR CMD FD: " << errfd << "  " << fdout << "  " << fdin << std::endl;
         pid_t child_pid = fork();
         if (child_pid == 0) {
 //            ...configure redirections
-            dup2_wrapper(used_fdout, 1);
-            dup2_wrapper(used_fdin, 0);
-            dup2_wrapper(used_errfd, 2);
-
+            dup2_wrapper(fdout, STDOUT_FILENO);
+            dup2_wrapper(fdin, STDIN_FILENO);
+            dup2_wrapper(errfd, STDERR_FILENO);
+// TODO: grep $(cat inpt) < ls_out doesnt work
             execute_command(cur_command_line[0], cur_command_line);
         }
         child_pids.push_back(child_pid);
@@ -828,15 +653,57 @@ void exec_shell_line(std::string &shell_line) {
     dup2_wrapper(dup_stdout, STDOUT_FILENO);
     if (close_wrapper(dup_stdout) == -1) {
         perror("close");
-        exit(-1);
+        exit(EXIT_FAILURE);
     }
+
+    if (errfd != STDERR_FILENO) {
+        if (close_wrapper(errfd) == -1) {
+            perror("close");
+            exit(EXIT_FAILURE);
+        }
+    }
+    if (fdout != STDOUT_FILENO) {
+        if (close_wrapper(fdout) == -1) {
+            perror("close");
+            exit(EXIT_FAILURE);
+        }
+    }
+    if (fdin != STDIN_FILENO) {
+        if (close_wrapper(fdin) == -1) {
+            perror("close");
+            exit(EXIT_FAILURE);
+        }
+    }
+
 
     if (!must_wait) {
         return;
     }
     for (pid_t child_pid : child_pids) {
         int child_status;
-        waitpid(child_pid, &child_status, 0);
+        while (true) {
+            int status = waitpid(child_pid, &child_status, 0);
+            if (status == -1) {
+                if (errno == ECHILD) {
+                    goto end_outer_loop;
+                } else if (errno != EINTR) {
+                    perror("Unexpected error from waitpid");
+                    std::cerr << errno << std::endl;
+                    exit_status = ExitCodes::EOTHER;
+                    return;
+                }
+            } else {
+                break;
+            }
+            // here EINTR happened
+        }
+        if (WIFEXITED(child_status)) {
+            exit_status = WEXITSTATUS(child_status);
+        } else if (WIFSIGNALED(child_status)) {
+            exit_status = ExitCodes::ESIGNALFAIL;
+        }
+        end_outer_loop:
+        ;
     }
 }
 

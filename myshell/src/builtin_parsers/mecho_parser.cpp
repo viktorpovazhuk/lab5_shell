@@ -3,6 +3,8 @@
 #include <iostream>
 #include <boost/program_options.hpp>
 
+namespace po = boost::program_options;
+
 void mecho_parser_t::print_help_message() {
     std::cout << "mecho [-h|--help] TEXT1 TEXT2 ...\n";
     std::cout << std::string(2, ' ') << "Print the text.\n\n";

@@ -17,10 +17,10 @@ set(CMAKE_CXX_STANDARD 17)
 
 #! It is a good practice to set "WARNINGS_AS_ERRORS" ON,
 #  but sometimes it creates too much trouble, so default is OFF.
-set(WARNINGS_AS_ERRORS OFF)
+set(WARNINGS_AS_ERRORS ON)
 
 #! Always use PVS Studio while developing. 
-set(ENABLE_PVS_STUDIO OFF)
+set(ENABLE_PVS_STUDIO ON)
 
 #! Select appropriate sanitizers.
 #  Definitely enable sanitizers while developing.
@@ -34,7 +34,7 @@ set(ENABLE_UBSan OFF)
 #! AddressSanitizer -- detects use after free or after scope exit,
 #  memory overflows and leaks.  
 #  Info: https://github.com/google/sanitizers/wiki/AddressSanitizer
-set(ENABLE_ASAN OFF)
+set(ENABLE_ASAN ON)
 #! ThreadSanitizer -- detects data races.
 set(ENABLE_TSan OFF)
 #! MemorySanitizer detects uninitialized memory reads 

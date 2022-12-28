@@ -11,8 +11,6 @@
 #include <filesystem>
 #include <unordered_map>
 
-namespace po = boost::program_options;
-
 class BuiltInOptionsParseException : public std::runtime_error {
 public:
     using runtime_error::runtime_error;
@@ -25,7 +23,7 @@ public:
     builtin_parser_t &operator=(const builtin_parser_t &) = delete;
     builtin_parser_t(builtin_parser_t &&) = default;
     builtin_parser_t &operator=(builtin_parser_t &&) = delete;
-    ~builtin_parser_t() = default;
+    virtual ~builtin_parser_t() = default;
 
     virtual void parse(const std::vector<std::string> &av);
 
@@ -39,8 +37,8 @@ public:
 
     virtual void setup_description();
 protected:
-    virtual void configure_parser(po::command_line_parser &parser);
-    virtual void analyze_parsed_options(po::parsed_options &parsed);
+    virtual void configure_parser(boost::program_options::command_line_parser &parser);
+    virtual void analyze_parsed_options(boost::program_options::parsed_options &parsed);
     virtual void analyze_var_map();
 
     boost::program_options::variables_map var_map{};

@@ -44,7 +44,7 @@ void builtin_parser_t::configure_parser(po::command_line_parser &parser) {
     parser.options(general_opt);
 }
 
-void builtin_parser_t::analyze_parsed_options(po::parsed_options &parsed) {
+void builtin_parser_t::analyze_parsed_options(po::parsed_options &parsed [[gnu::unused]]) {
 
 }
 

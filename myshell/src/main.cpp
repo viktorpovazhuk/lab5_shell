@@ -56,8 +56,6 @@ int main(int argc, char *argv[]) {
     string path_var;
     if (path_ptr != nullptr)
         path_var = path_ptr;
-    else
-        path_var = "";
     if (!path_var.empty())
         path_var = ":" + path_var;
     fs::path parent_dir = fs::system_complete(argv[0]).parent_path();

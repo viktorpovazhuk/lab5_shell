@@ -1,5 +1,7 @@
 #include "builtin_parsers/dot_parser.h"
 
+namespace po = boost::program_options;
+
 void dot_parser_t::print_help_message() {
     std::cout << ". <path> [-h|--help]\n";
     std::cout << std::string(2, ' ') << "Execute commands from a file in the current shell.\n\n";

@@ -1,5 +1,7 @@
 #include "builtin_parsers/mcd_parser.h"
 
+namespace po = boost::program_options;
+
 void mcd_parser_t::print_help_message() {
     std::cout << "mcd <path> [-h|--help]\n";
     std::cout << std::string(2, ' ') << "Change the shell working directory\n\n";
